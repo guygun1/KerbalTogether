@@ -1,0 +1,27 @@
+spec_version: v1.4
+identifier: KerbalTogether
+name: Kerbal Together
+abstract: Local hosting, router traversal, pack diagnostics and an experimental generic compatibility layer for Luna Multiplayer.
+author: guygun1
+license: MIT
+$kref: '#/ckan/spacedock/SPACE_DOCK_ID'
+ksp_version: '1.12'
+release_status: testing
+tags:
+  - plugin
+depends:
+  - name: LunaMultiplayer
+    version: '0.29.2'
+  - name: Harmony2
+install:
+  - find: KerbalTogether
+    install_to: GameData
+  - file: KerbalTogether.Host.exe
+    install_to: GameRoot
+  - file: KerbalTogether.Server.exe
+    install_to: GameRoot
+resources:
+  homepage: https://github.com/guygun1/KerbalTogether
+  repository: https://github.com/guygun1/KerbalTogether
+  bugtracker: https://github.com/guygun1/KerbalTogether/issues
+  manual: https://github.com/guygun1/KerbalTogether/blob/main/README.md

@@ -1,0 +1,212 @@
+diff --git a/Server/Client/ClientConnectionHandler.cs b/Server/Client/ClientConnectionHandler.cs
+index f1614c1..33da9c9 100644
+--- a/Server/Client/ClientConnectionHandler.cs
++++ b/Server/Client/ClientConnectionHandler.cs
+@@ -38,6 +38,7 @@ public static void DisconnectClient(ClientStructure client, string reason = "")
+             if (client.ConnectionStatus != ConnectionStatus.Disconnected)
+             {
+                 client.ConnectionStatus = ConnectionStatus.Disconnected;
++                Compatibility.CompatibilityRelay.Disconnect(client);
+                 LmpPluginHandler.FireOnClientDisconnect(client);
+                 if (client.Authenticated)
+                 {
+diff --git a/Server/Command/Command/BanPlayerCommand.cs b/Server/Command/Command/BanPlayerCommand.cs
+index b64f019..7f44d05 100644
+--- a/Server/Command/Command/BanPlayerCommand.cs
++++ b/Server/Command/Command/BanPlayerCommand.cs
+@@ -46,7 +46,7 @@ public override bool Execute(string commandArgs)
+ 
+         public static IEnumerable<string> GetBannedPlayers()
+         {
+-            return FileHandler.ReadFileLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LMPPlayerBans.txt"));
++            return FileHandler.ReadFileLines(Path.Combine(global::Server.Context.ServerContext.DataDirectory, "LMPPlayerBans.txt"));
+         }
+     }
+ }
+diff --git a/Server/Command/Command/Base/HandledCommand.cs b/Server/Command/Command/Base/HandledCommand.cs
+index 778f4c9..4e6d841 100644
+--- a/Server/Command/Command/Base/HandledCommand.cs
++++ b/Server/Command/Command/Base/HandledCommand.cs
+@@ -18,7 +18,7 @@ public abstract class HandledCommand : SimpleCommand
+ 
+         protected virtual List<string> Items { get; set; } = new List<string>();
+ 
+-        protected string FullPath => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, FileName);
++        protected string FullPath => Path.Combine(global::Server.Context.ServerContext.DataDirectory, FileName);
+ 
+         #region Protected methods
+ 
+diff --git a/Server/Command/CommandHandler.cs b/Server/Command/CommandHandler.cs
+index 452fb99..ef71b93 100644
+--- a/Server/Command/CommandHandler.cs
++++ b/Server/Command/CommandHandler.cs
+@@ -17,6 +17,7 @@ public class CommandHandler
+ 
+         private static void RegisterCommands()
+         {
++            RegisterCommand("shutdown", _ => { Task.Run(MainServer.Exit); return true; }, "Save and stop the locally hosted session");
+             //Register the server Commands
+             RegisterCommand("ban", new BanPlayerCommand().Execute, "Bans someone from the server");
+             RegisterCommand("changesettings", new ChangeSettingsCommand().Execute, "Changes the server settings");
+diff --git a/Server/Context/ServerContext.cs b/Server/Context/ServerContext.cs
+index 42443c2..16687a9 100644
+--- a/Server/Context/ServerContext.cs
++++ b/Server/Context/ServerContext.cs
+@@ -25,10 +25,11 @@ public static class ServerContext
+         public static bool UsePassword => !string.IsNullOrEmpty(GeneralSettings.SettingsStore.Password);
+ 
+         public static Stopwatch ServerClock = new Stopwatch();
+-        public static string UniverseDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Universe");
+-        public static string ConfigDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Config");
++        public static readonly string DataDirectory = Environment.GetEnvironmentVariable("KERBAL_TOGETHER_DATA") ?? AppDomain.CurrentDomain.BaseDirectory;
++        public static string UniverseDirectory = Path.Combine(DataDirectory, "Universe");
++        public static string ConfigDirectory = Path.Combine(DataDirectory, "Config");
+         public static string ModFilePath = Path.Combine(ConfigDirectory, "LMPModControl.xml");
+-        public static string OldModFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LMPModControl.xml");
++        public static string OldModFilePath = Path.Combine(DataDirectory, "LMPModControl.xml");
+ 
+         // Configuration object
+         public static NetPeerConfiguration Config { get; } = new NetPeerConfiguration("LMP")
+diff --git a/Server/Log/LunaLog.cs b/Server/Log/LunaLog.cs
+index c27b365..0f5e3dc 100644
+--- a/Server/Log/LunaLog.cs
++++ b/Server/Log/LunaLog.cs
+@@ -32,7 +32,7 @@ public class LunaLog : BaseLogger
+     {
+         private static readonly BaseLogger Singleton = new LunaLog();
+ 
+-        public static string LogFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
++        public static string LogFolder = Path.Combine(global::Server.Context.ServerContext.DataDirectory, "logs");
+ 
+         /// <summary>
+         /// Serializes all access to <see cref="_writer"/>, <see cref="_currentPath"/>, and the
+diff --git a/Server/MainServer.cs b/Server/MainServer.cs
+index beaa48c..3add8c9 100644
+--- a/Server/MainServer.cs
++++ b/Server/MainServer.cs
+@@ -42,6 +42,11 @@ public class MainServer
+ 
+         public static void Main(string[] args)
+         {
++            var managedData = Environment.GetEnvironmentVariable("KERBAL_TOGETHER_DATA");
++            if (!string.IsNullOrEmpty(managedData))
++            {
++                Directory.CreateDirectory(ServerContext.DataDirectory);
++            }
+             // Memory diagnostics are an opt-in operator tool. Gating them on a CLI flag
+             // (rather than just the IntervalSettings entry) keeps the production log clean
+             // by default and means turning diagnostics on for a hosted server is a single
+@@ -143,6 +148,7 @@ public static void Main(string[] args)
+                 while (ServerContext.ServerStarting)
+                     Thread.Sleep(500);
+ 
++                Compatibility.CompatibilityRelay.Initialize();
+                 LunaLog.Normal("All systems up and running. Поехали!");
+                 LmpPluginHandler.FireOnServerStart();
+ 
+@@ -155,7 +161,7 @@ public static void Main(string[] args)
+                 if (IsRestart)
+                 {
+                     //Start new server
+-                    var serverExePath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "\\Server.exe";
++                    var serverExePath = Environment.ProcessPath;
+                     var newProcLmpServer = new ProcessStartInfo { FileName = serverExePath };
+                     Process.Start(newProcLmpServer);
+                 }
+@@ -215,15 +221,15 @@ private static bool HasFlag(string[] args, string flag)
+         /// <summary>
+         /// Runs the exit logic
+         /// </summary>
+-        private static void Exit()
++        public static void Exit()
+         {
+             LunaLog.Normal("Exiting... Please wait until all threads are finished");
+             ExitEvent.Exit();
+ 
+-            CancellationTokenSrc.Cancel();
+-            Task.WaitAll(TaskContainer.ToArray());
+-
+             ServerContext.Shutdown("Server is shutting down");
++            CancellationTokenSrc.Cancel();
++            try { Task.WaitAll(TaskContainer.ToArray()); }
++            catch (AggregateException e) { e.Handle(x => x is OperationCanceledException); }
+ 
+             QuitEvent.Set();
+         }
+diff --git a/Server/Message/ModDataMsgReader.cs b/Server/Message/ModDataMsgReader.cs
+index 7ff809a..7ff9b78 100644
+--- a/Server/Message/ModDataMsgReader.cs
++++ b/Server/Message/ModDataMsgReader.cs
+@@ -13,7 +13,7 @@ public class ModDataMsgReader : ReaderBase
+         public override void HandleMessage(ClientStructure client, IClientMessageBase message)
+         {
+             var data = (ModMsgData)message.Data;
+-            if (data.Relay)
++            if (data.Relay && data.ModName != KerbalTogether.Core.CompatibilityPacket.Channel)
+                 MessageQueuer.RelayMessage<ModSrvMsg>(client, data);
+             LmpModInterface.OnModMessageReceived(client, data.ModName, data.Data, data.NumBytes);
+         }
+diff --git a/Server/Plugin/LmpPluginHandler.cs b/Server/Plugin/LmpPluginHandler.cs
+index 20dd0dc..187e034 100644
+--- a/Server/Plugin/LmpPluginHandler.cs
++++ b/Server/Plugin/LmpPluginHandler.cs
+@@ -35,7 +35,7 @@ private static Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEven
+ 
+         public static void LoadPlugins()
+         {
+-            var pluginDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Plugins");
++            var pluginDirectory = Path.Combine(global::Server.Context.ServerContext.DataDirectory, "Plugins");
+             if (!FileHandler.FolderExists(pluginDirectory))
+                 FileHandler.FolderCreate(pluginDirectory);
+             LunaLog.Debug("Loading plugins...");
+@@ -274,4 +274,4 @@ public static void FireOnMessageSent(ClientStructure client, IServerMessageBase
+             }
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/Server/Server.csproj b/Server/Server.csproj
+index d38b192..dca3341 100644
+--- a/Server/Server.csproj
++++ b/Server/Server.csproj
+@@ -11,6 +11,7 @@
+ 
+   <ItemGroup>
+     <Compile Remove="System\GroupSystemSender.cs" />
++    <Compile Include="..\..\src\KerbalTogether.Server\CompatibilityRelay.cs" Link="Compatibility\CompatibilityRelay.cs" />
+   </ItemGroup>
+ 
+   <ItemGroup>
+@@ -48,6 +49,7 @@
+   </ItemGroup>
+ 
+   <ItemGroup>
++    <ProjectReference Include="..\..\src\KerbalTogether.Core\KerbalTogether.Core.csproj" />
+     <ProjectReference Include="..\Lidgren.Core\Lidgren.Core.csproj" />
+     <ProjectReference Include="..\LmpUpdater\LmpUpdater.csproj" />
+     <ProjectReference Include="..\uhttpsharp\uhttpsharp.csproj" />
+diff --git a/Server/Server/LidgrenMasterServer.cs b/Server/Server/LidgrenMasterServer.cs
+index dfc53ba..3b32f9c 100644
+--- a/Server/Server/LidgrenMasterServer.cs
++++ b/Server/Server/LidgrenMasterServer.cs
+@@ -137,6 +137,7 @@ private static MsRegisterServerMsgData BuildRegisterMsgData(IPEndPoint endpoint4
+         /// </summary
+         public static async void CheckNATType()
+         {
++            if (!MasterServerSettings.SettingsStore.RegisterWithMasterServer) return;
+             var msgData = ServerContext.ServerMessageFactory.CreateNewMessageData<MsSTUNBindingRequestMsgData>();
+             msgData.SentTime = LunaNetworkTime.UtcNow.Ticks;
+             // Signal receive loop to process STUN responses
+diff --git a/Server/System/ScenarioSystem.cs b/Server/System/ScenarioSystem.cs
+index 9369ca7..7241820 100644
+--- a/Server/System/ScenarioSystem.cs
++++ b/Server/System/ScenarioSystem.cs
+@@ -94,6 +94,7 @@ public static void ParseReceivedScenarioData(ClientStructure client, ScenarioBas
+             LunaLog.Debug($"Saving {data.ScenarioCount} scenario modules from {client.PlayerName}");
+             for (var i = 0; i < data.ScenarioCount; i++)
+             {
++                if (Compatibility.CompatibilityRelay.OwnsScenarioStream(data.ScenariosData[i].Module)) continue;
+                 var scenarioAsConfigNode = Encoding.UTF8.GetString(data.ScenariosData[i].Data, 0, data.ScenariosData[i].NumBytes);
+                 ScenarioDataUpdater.RawConfigNodeInsertOrUpdate(data.ScenariosData[i].Module, scenarioAsConfigNode);
+             }

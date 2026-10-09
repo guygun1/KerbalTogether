@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+dist/
+reports/*.xml
+*.user
+upstream/
+artifacts/
+reports/installed-pack.*
+reports/compatibility.md
+.idea/
+.vs/
+**/PluginData/
